@@ -3,9 +3,16 @@ import re
 import argparse
 import json
 
+def parsear_header(linea):
+    """Busca la resolución en la cabecera: RES: 1920x1080"""
+    match = re.search(r'RES: (\d+)x(\d+)', linea)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None, None
+
 def parsear_linea(linea):
-    # Formato esperado: "PALABRA" (Conf: 0.99) - HH:MM:SS:mmm - CUADRANTE - file:///...
-    patron = r'"(.*?)" \(Conf: ([\d.]+)\) - ([\d:.]+) - (\d+) - (file:.*)'
+    # Formato nuevo: "PALABRA" (Conf: 0.99) - HH:MM:SS:mmm - [x1,y1,x2,y2] - file:///...
+    patron = r'"(.*?)" \(Conf: ([\d.]+)\) - ([\d:.]+) - \[(\d+),(\d+),(\d+),(\d+)\] - (file:.*)'
     match = re.search(patron, linea)
     
     if match:
@@ -13,8 +20,13 @@ def parsear_linea(linea):
             "word": match.group(1),
             "conf": float(match.group(2)),
             "time": match.group(3),
-            "quad": int(match.group(4)),
-            "src": match.group(5).strip()
+            "box": {
+                "x1": int(match.group(4)),
+                "y1": int(match.group(5)),
+                "x2": int(match.group(6)),
+                "y2": int(match.group(7))
+            },
+            "src": match.group(8).strip()
         }
     return None
 
@@ -22,8 +34,18 @@ def generar_html(txt_input, html_output):
     print(f"📖 Leyendo: {txt_input}")
     
     data = []
+    video_w, video_h = 1920, 1080 # Default fallback
+    
     if os.path.exists(txt_input):
         with open(txt_input, "r", encoding="utf-8") as f:
+            # Leer primera línea para buscar resolución
+            header = f.readline()
+            w_found, h_found = parsear_header(header)
+            if w_found:
+                video_w, video_h = w_found, h_found
+                print(f"🖥️ Resolución detectada: {video_w}x{video_h}")
+            
+            # Leer el resto
             for line in f:
                 parsed = parsear_linea(line)
                 if parsed:
@@ -34,349 +56,182 @@ def generar_html(txt_input, html_output):
 
     print(f"✅ Se han procesado {len(data)} palabras.")
     
-    # Convertimos los datos a JSON para incrustarlos en el HTML
     json_data = json.dumps(data)
+    json_dims = json.dumps({"w": video_w, "h": video_h})
 
-    # --- PLANTILLA HTML (CSS + JS + ESTRUCTURA) ---
+    # --- HTML ---
     html_content = f"""
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visor de Detecciones OCR</title>
+    <title>Visor OCR PRO</title>
     <style>
-        :root {{
-            --bg-dark: #1e1e1e;
-            --bg-panel: #252526;
-            --text-main: #d4d4d4;
-            --accent: #007acc;
-            --accent-hover: #005f9e;
-            --border: #3e3e42;
-            --brace-color: #dcdcaa;
+        :root {{ --bg-dark: #1e1e1e; --bg-panel: #252526; --text-main: #d4d4d4; --accent: #007acc; --border: #3e3e42; --brace: #dcdcaa; }}
+        body {{ margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg-dark); color: var(--text-main); overflow: hidden; height: 100vh; display: flex; }}
+        
+        /* SIDEBAR */
+        .sidebar {{ width: 420px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }}
+        .controls {{ padding: 15px; background: #2d2d30; border-bottom: 1px solid var(--border); }}
+        select {{ width: 100%; padding: 8px; background: #3c3c3c; color: white; border: 1px solid #555; }}
+        
+        .list-container {{ flex: 1; overflow-y: auto; }}
+        .list-item {{ padding: 10px 15px; cursor: pointer; border-left: 3px solid transparent; display: flex; justify-content: space-between; position: relative; transition: 0.1s; }}
+        .list-item:hover {{ background: #37373d; border-left-color: var(--accent); }}
+        
+        .word-text {{ font-size: 15px; font-weight: bold; color: #fff; display: block; }}
+        .meta-info {{ font-size: 12px; color: #888; margin-top: 3px; }}
+        .conf-badge {{ background: #333; padding: 2px 5px; border-radius: 3px; color: #4ec9b0; margin-right: 8px; }}
+
+        /* LLAVES */
+        .bracket {{ position: absolute; right: 10px; width: 10px; border-color: var(--brace); display: none; }}
+        .g-start .bracket {{ display: block; height: 50%; top: 50%; border-top: 2px solid; border-right: 2px solid; border-top-right-radius: 6px; }}
+        .g-mid .bracket {{ display: block; height: 100%; top: 0; border-right: 2px solid; }}
+        .g-end .bracket {{ display: block; height: 50%; top: 0; border-bottom: 2px solid; border-right: 2px solid; border-bottom-right-radius: 6px; }}
+
+        /* PREVIEW AREA */
+        .preview-area {{ flex: 1; background: #111; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }}
+        
+        /* Contenedor de la imagen recortada */
+        .zoom-frame {{
+            width: 90%; height: 90%; 
+            position: relative; overflow: hidden; 
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            border: 1px solid #333;
+            background: #000;
+            display: flex; align-items: center; justify-content: center;
         }}
         
-        body {{
-            margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-dark);
-            color: var(--text-main);
-            overflow: hidden;
-            height: 100vh;
-            display: flex;
-        }}
-
-        /* --- SIDEBAR (IZQUIERDA) --- */
-        .sidebar {{
-            width: 400px;
-            background-color: var(--bg-panel);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-        }}
-
-        .controls {{
-            padding: 15px;
-            border-bottom: 1px solid var(--border);
-            background: #2d2d30;
-        }}
-
-        select {{
-            width: 100%;
-            padding: 8px;
-            background: #3c3c3c;
-            color: white;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 14px;
-            outline: none;
-        }}
-
-        .list-container {{
-            flex: 1;
-            overflow-y: auto;
-            padding: 10px 0;
-        }}
-
-        .list-item {{
-            padding: 8px 15px;
-            cursor: pointer;
-            border-left: 3px solid transparent;
-            transition: background 0.2s;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: relative;
-        }}
-
-        .list-item:hover {{
-            background-color: #37373d;
-            border-left-color: var(--accent);
-        }}
-        
-        .list-item.active {{
-            background-color: #094771;
-            border-left-color: #0099ff;
-        }}
-
-        .word-info {{
-            display: flex;
-            flex-direction: column;
-        }}
-
-        .word-text {{
-            font-size: 16px;
-            font-weight: 600;
-            color: #fff;
-        }}
-
-        .meta-info {{
-            font-size: 12px;
-            color: #888;
-            margin-top: 2px;
-        }}
-
-        .conf-badge {{
-            background: #333;
-            padding: 1px 5px;
-            border-radius: 3px;
-            color: #4ec9b0;
-            margin-right: 5px;
-        }}
-
-        /* --- VISUALIZACIÓN DE LLAVES (Agrupación) --- */
-        .bracket-indicator {{
-            width: 10px;
-            height: 100%;
-            position: absolute;
-            right: 10px;
-            top: 0;
-            display: none; /* Por defecto oculto */
-        }}
-
-        /* Solo mostramos la llave si estamos ordenados por tiempo */
-        .group-single .bracket-indicator {{ display: none; }}
-        
-        .group-start .bracket-indicator {{
-            display: block;
-            border-top: 2px solid var(--brace-color);
-            border-right: 2px solid var(--brace-color);
-            border-top-right-radius: 6px;
-            height: 50%;
-            top: 50%;
-        }}
-
-        .group-middle .bracket-indicator {{
-            display: block;
-            border-right: 2px solid var(--brace-color);
-        }}
-
-        .group-end .bracket-indicator {{
-            display: block;
-            border-bottom: 2px solid var(--brace-color);
-            border-right: 2px solid var(--brace-color);
-            border-bottom-right-radius: 6px;
-            height: 50%;
-            top: 0;
-        }}
-
-        /* --- PREVIEW (DERECHA) --- */
-        .preview-area {{
-            flex: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background-image: 
-                linear-gradient(45deg, #222 25%, transparent 25%), 
-                linear-gradient(-45deg, #222 25%, transparent 25%), 
-                linear-gradient(45deg, transparent 75%, #222 75%), 
-                linear-gradient(-45deg, transparent 75%, #222 75%);
-            background-size: 20px 20px;
-            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-            overflow: hidden;
-            position: relative;
-        }}
-
-        .zoom-container {{
-            width: 90%;
-            height: 90%;
-            overflow: hidden; /* CROP */
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            border: 1px solid #444;
-            position: relative;
-            background: black;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }}
-
         #preview-img {{
-            max-width: 100%;
-            max-height: 100%;
-            transition: transform 0.2s ease-out;
+            max-width: 100%; max-height: 100%;
+            /* La magia del zoom ocurre aquí */
             transform-origin: center center;
-            display: none; /* Oculto hasta hover */
+            transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }}
         
-        .placeholder-text {{
-            color: #555;
-            font-size: 20px;
-        }}
+        .placeholder {{ color: #444; font-size: 1.5rem; }}
 
-        /* --- MODAL (FULL SCREEN) --- */
-        .modal {{
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.9);
-            justify-content: center;
-            align-items: center;
-        }}
-
-        .modal-content {{
-            max-width: 95%;
-            max-height: 95%;
-            box-shadow: 0 0 30px rgba(0,0,0,0.8);
-            border: 2px solid #333;
-        }}
-
+        /* MODAL */
+        .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 999; justify-content: center; align-items: center; cursor: zoom-out; }}
+        .modal img {{ max-width: 95%; max-height: 95%; box-shadow: 0 0 20px #000; border: 2px solid #555; }}
     </style>
 </head>
 <body>
 
-    <div class="sidebar">
-        <div class="controls">
-            <label style="font-size:12px; color:#aaa; margin-bottom:5px; display:block;">ORDENAR POR:</label>
-            <select id="sortSelect">
-                <option value="time">Tiempo (Cronológico)</option>
-                <option value="conf">Confianza (Mayor a menor)</option>
-                <option value="alpha">Alfabético (A-Z)</option>
-            </select>
-        </div>
-        <div class="list-container" id="wordList">
-            </div>
+<div class="sidebar">
+    <div class="controls">
+        <select id="sortSelect">
+            <option value="time">Orden: Cronológico (Tiempo)</option>
+            <option value="conf">Orden: Confianza (Mejor a peor)</option>
+            <option value="alpha">Orden: Alfabético (A-Z)</option>
+        </select>
     </div>
+    <div class="list-container" id="list"></div>
+</div>
 
-    <div class="preview-area">
-        <div class="zoom-container">
-            <p class="placeholder-text" id="placeholder">Pasa el ratón por una palabra</p>
-            <img id="preview-img" src="" alt="Frame Preview">
-        </div>
+<div class="preview-area">
+    <div class="zoom-frame">
+        <p class="placeholder" id="ph">Pasa el ratón por la lista</p>
+        <img id="preview-img" src="">
     </div>
+</div>
 
-    <div class="modal" id="imageModal">
-        <img class="modal-content" id="modal-img">
-    </div>
+<div class="modal" id="modal">
+    <img id="modal-img">
+</div>
 
-    <script>
-        // DATOS INCRUSTADOS DESDE PYTHON
-        const rawData = {json_data};
+<script>
+    const data = {json_data};
+    const dims = {json_dims}; // {{w: 1920, h: 1080}}
+    
+    const listEl = document.getElementById('list');
+    const sortEl = document.getElementById('sortSelect');
+    const imgEl = document.getElementById('preview-img');
+    const phEl = document.getElementById('ph');
+    const modal = document.getElementById('modal');
+    const modalImg = document.getElementById('modal-img');
+
+    function render() {{
+        listEl.innerHTML = '';
+        const mode = sortEl.value;
         
-        const listContainer = document.getElementById('wordList');
-        const sortSelect = document.getElementById('sortSelect');
-        const previewImg = document.getElementById('preview-img');
-        const placeholder = document.getElementById('placeholder');
-        const modal = document.getElementById('imageModal');
-        const modalImg = document.getElementById('modal-img');
+        let sorted = [...data];
+        if (mode === 'conf') sorted.sort((a,b) => b.conf - a.conf);
+        if (mode === 'alpha') sorted.sort((a,b) => a.word.localeCompare(b.word));
+        // time es default
 
-        // Mapeo de Cuadrantes (1-9) a Transform Origin CSS
-        const quadMap = {{
-            1: "0% 0%",    2: "50% 0%",    3: "100% 0%",
-            4: "0% 50%",   5: "50% 50%",   6: "100% 50%",
-            7: "0% 100%",  8: "50% 100%",  9: "100% 100%"
-        }};
-
-        function renderList() {{
-            listContainer.innerHTML = '';
-            const sortMode = sortSelect.value;
+        sorted.forEach((item, i) => {{
+            const div = document.createElement('div');
+            div.className = 'list-item';
             
-            // Ordenar datos
-            let data = [...rawData];
-            if (sortMode === 'time') {{
-                // Ya vienen ordenados por defecto, pero nos aseguramos
-                // (Asumimos que el orden del array original es temporal)
-            }} else if (sortMode === 'conf') {{
-                data.sort((a, b) => b.conf - a.conf);
-            }} else if (sortMode === 'alpha') {{
-                data.sort((a, b) => a.word.localeCompare(b.word));
+            // Lógica de llaves
+            if (mode === 'time') {{
+                const p = sorted[i-1]; const n = sorted[i+1];
+                const sameP = p && p.src === item.src;
+                const sameN = n && n.src === item.src;
+                if (!sameP && sameN) div.classList.add('g-start');
+                else if (sameP && sameN) div.classList.add('g-mid');
+                else if (sameP && !sameN) div.classList.add('g-end');
             }}
 
-            data.forEach((item, index) => {{
-                const div = document.createElement('div');
-                div.className = 'list-item';
-                
-                // --- LÓGICA DE AGRUPACIÓN (LLAVES) ---
-                if (sortMode === 'time') {{
-                    const prev = data[index - 1];
-                    const next = data[index + 1];
-                    const isSamePrev = prev && prev.src === item.src;
-                    const isSameNext = next && next.src === item.src;
-
-                    if (!isSamePrev && !isSameNext) {{
-                        div.classList.add('group-single');
-                    }} else if (!isSamePrev && isSameNext) {{
-                        div.classList.add('group-start');
-                    }} else if (isSamePrev && isSameNext) {{
-                        div.classList.add('group-middle');
-                    }} else if (isSamePrev && !isSameNext) {{
-                        div.classList.add('group-end');
-                    }}
-                }} else {{
-                    div.classList.add('group-single');
-                }}
-
-                div.innerHTML = `
-                    <div class="word-info">
-                        <span class="word-text">${{item.word}}</span>
-                        <div class="meta-info">
-                            <span class="conf-badge">${{(item.conf * 100).toFixed(0)}}%</span>
-                            ${{item.time}}
-                        </div>
+            div.innerHTML = `
+                <div>
+                    <span class="word-text">${{item.word}}</span>
+                    <div class="meta-info">
+                        <span class="conf-badge">${{Math.floor(item.conf*100)}}%</span> 
+                        ${{item.time}}
                     </div>
-                    <div class="bracket-indicator"></div>
-                `;
+                </div>
+                <div class="bracket"></div>
+            `;
 
-                // --- EVENTOS ---
+            // --- LÓGICA DE ZOOM ---
+            div.addEventListener('mouseenter', () => {{
+                phEl.style.display = 'none';
+                imgEl.style.display = 'block';
+                imgEl.src = item.src;
+
+                // 1. Calcular Centro de la palabra
+                const boxW = item.box.x2 - item.box.x1;
+                const boxH = item.box.y2 - item.box.y1;
+                const centerX = item.box.x1 + (boxW / 2);
+                const centerY = item.box.y1 + (boxH / 2);
+
+                // 2. Convertir a Porcentajes (para CSS)
+                const originX = (centerX / dims.w) * 100;
+                const originY = (centerY / dims.h) * 100;
+
+                // 3. Calcular Escala (Con Contexto)
+                // Calculamos cuánto tendríamos que ampliar para que la palabra ocupe TODA la pantalla
+                const scaleX = dims.w / boxW;
+                const scaleY = dims.h / boxH;
                 
-                // HOVER: Zoom Inteligente
-                div.addEventListener('mouseenter', () => {{
-                    placeholder.style.display = 'none';
-                    previewImg.style.display = 'block';
-                    previewImg.src = item.src;
-                    
-                    // Aplicar Zoom según cuadrante
-                    const origin = quadMap[item.quad] || "50% 50%";
-                    previewImg.style.transformOrigin = origin;
-                    previewImg.style.transform = "scale(2.5)"; // ZOOM x2.5
-                }});
+                // Nos quedamos con la menor (para que quepa entera) y la reducimos
+                // Multiplicamos por 0.3 para dejar mucho "aire" (Contexto)
+                let scale = Math.min(scaleX, scaleY) * 0.35; 
+                
+                // Límites de seguridad (ni muy pequeño ni gigantesco)
+                if (scale < 1) scale = 1; 
+                if (scale > 5) scale = 5; 
 
-                // CLICK: Modal
-                div.addEventListener('click', () => {{
-                    modal.style.display = 'flex';
-                    modalImg.src = item.src;
-                }});
-
-                listContainer.appendChild(div);
+                imgEl.style.transformOrigin = `${{originX}}% ${{originY}}%`;
+                imgEl.style.transform = `scale(${{scale}})`;
             }});
-        }}
 
-        // Event Listeners Globales
-        sortSelect.addEventListener('change', renderList);
-        
-        // Cerrar modal
-        modal.addEventListener('click', () => {{
-            modal.style.display = 'none';
+            div.addEventListener('click', () => {{
+                modal.style.display = 'flex';
+                modalImg.src = item.src;
+            }});
+
+            listEl.appendChild(div);
         }});
+    }}
 
-        // Render inicial
-        renderList();
-
-    </script>
+    sortEl.addEventListener('change', render);
+    modal.addEventListener('click', () => modal.style.display = 'none');
+    render();
+</script>
 </body>
 </html>
     """
@@ -384,15 +239,13 @@ def generar_html(txt_input, html_output):
     with open(html_output, "w", encoding="utf-8") as f:
         f.write(html_content)
     
-    print(f"🚀 ¡Éxito! Visor generado en: {html_output}")
+    print(f"🚀 Visor generado: {html_output}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generador de Visor HTML para OCR")
-    parser.add_argument("input_txt", help="Ruta al archivo registro_detectado.txt")
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_txt", help="Ruta al txt")
     args = parser.parse_args()
     
-    # Deducir nombre de salida
     folder = os.path.dirname(args.input_txt)
     output_html = os.path.join(folder, "visor_resultados.html")
     
