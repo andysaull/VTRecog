@@ -5,7 +5,7 @@ import json
 import time
 from multiprocessing import Pool, cpu_count
 
-# --- FUNCIONES AUXILIARES (Ligeras) ---
+# --- FUNCIONES AUXILIARES ---
 
 def parsear_header(linea):
     match = re.search(r'RES: (\d+)x(\d+)', linea)
@@ -25,7 +25,6 @@ def time_to_seconds(time_str):
         return 0.0
 
 def parsear_linea(linea):
-    # Formato: "PALABRA" (Conf: 0.99) - HH:MM:SS:mmm - [x1,y1,x2,y2] - file:///...
     patron = r'"(.*?)" \(Conf: ([\d.]+)\) - ([\d:.]+) - \[(\d+),(\d+),(\d+),(\d+)\] - (file:.*)'
     match = re.search(patron, linea)
     if match:
@@ -52,54 +51,50 @@ def cargar_diccionario(ruta_diccionario):
         with open(ruta_diccionario, "r", encoding="utf-8") as f:
             for linea in f:
                 w = linea.strip().upper()
-                # Filtramos palabras muy cortas
-                if len(w) > 3: 
+                # CAMBIO: Ahora aceptamos palabras de 2 letras o más (ej: FE, TU, EL)
+                # Evitamos las de 1 sola letra para no colorear todas las 'A' o 'Y' sueltas.
+                if len(w) > 1: 
                     palabras.append(w)
-        # Ordenar por longitud es vital para que el regex funcione bien
+        # Ordenamos por longitud descendente para que 'AUTOMOVIL' se detecte antes que 'AUTO'
         palabras.sort(key=len, reverse=True)
     else:
         print("⚠️ NO SE ENCONTRÓ diccionario_es.txt.")
-        palabras = "HOLA ADIOS COCHE CASA".split()
+        palabras = "HOLA ADIOS COCHE CASA EL LA DE".split()
     return palabras
 
-# --- LÓGICA DEL WORKER (Proceso Hijo) ---
+# --- LÓGICA DEL WORKER ---
 def worker_procesar_chunk(chunk_data, diccionario):
-    """
-    Esta función se ejecuta en paralelo en cada núcleo.
-    Recibe un trozo de la lista de datos y el diccionario completo.
-    """
     processed_chunk = []
     
-    # Compilamos regexes básicos si fuera necesario, pero como el diccionario cambia...
-    # Iteramos sobre los datos
     for item in chunk_data:
         original_word = item['word']
         upper_word = original_word.upper()
         item['hasSpanish'] = False
         item['displayHtml'] = original_word
         
-        # Solo buscamos si la palabra es suficientemente larga para contener algo útil
-        if len(upper_word) > 3:
+        # CAMBIO: Ahora procesamos palabras detectadas que tengan más de 1 letra
+        if len(upper_word) > 1:
             for dict_word in diccionario:
                 if dict_word in upper_word:
                     item['hasSpanish'] = True
                     # Reemplazo Case Insensitive
                     regex = re.compile(re.escape(dict_word), re.IGNORECASE)
                     item['displayHtml'] = regex.sub(r'<span class="highlight">\g<0></span>', original_word)
+                    
+                    # Una vez encontrada una coincidencia, paramos para evitar solapamientos raros
                     break
         
         processed_chunk.append(item)
         
     return processed_chunk
 
-# --- FUNCIÓN PRINCIPAL DE ORQUESTACIÓN ---
+# --- FUNCIÓN PRINCIPAL ---
 def generar_html_multiprocess(txt_input, video_path, html_output):
     print(f"📖 Leyendo reporte: {txt_input}")
     
     raw_data = []
     video_w, video_h = 1920, 1080 
     
-    # 1. LEER TXT
     if os.path.exists(txt_input):
         with open(txt_input, "r", encoding="utf-8") as f:
             header = f.readline()
@@ -118,44 +113,37 @@ def generar_html_multiprocess(txt_input, video_path, html_output):
     total_words = len(raw_data)
     print(f"📋 Total palabras detectadas: {total_words}")
 
-    # 2. CARGAR DICCIONARIO
+    # CARGAR DICCIONARIO
     script_dir = os.path.dirname(os.path.abspath(__file__))
     dicc_path = os.path.join(script_dir, "diccionario_es.txt")
     diccionario = cargar_diccionario(dicc_path)
-    print(f"📖 Diccionario cargado: {len(diccionario)} términos.")
+    print(f"📖 Diccionario cargado: {len(diccionario)} términos (>1 letra).")
 
-    # 3. MULTIPROCESSING: BÚSQUEDA DE ESPAÑOL
+    # MULTIPROCESSING
     num_cores = cpu_count()
     print(f"🚀 Iniciando análisis paralelo con {num_cores} núcleos...")
     
     start_time = time.time()
     
-    # Dividir datos en chunks
     chunk_size = (total_words // num_cores) + 1
     chunks = [raw_data[i:i + chunk_size] for i in range(0, total_words, chunk_size)]
-    
-    # Preparar argumentos para starmap: [(chunk1, dicc), (chunk2, dicc), ...]
     pool_args = [(chunk, diccionario) for chunk in chunks]
     
     with Pool(processes=num_cores) as pool:
-        # Ejecutar en paralelo
         results = pool.starmap(worker_procesar_chunk, pool_args)
     
-    # Aplanar la lista de resultados (lista de listas -> lista única)
     final_data = [item for sublist in results for item in sublist]
     
     elapsed = time.time() - start_time
     count_spanish = sum(1 for x in final_data if x['hasSpanish'])
-    print(f"✅ Análisis completado en {elapsed:.2f}s. Detectadas {count_spanish} palabras en español.")
+    print(f"✅ Análisis completado en {elapsed:.2f}s. Detectadas {count_spanish} palabras con español.")
 
-    # 4. PREPARAR DATOS PARA HTML
     abs_video_path = os.path.abspath(video_path).replace(os.sep, '/')
     video_src = f"file:///{abs_video_path}"
 
     json_data = json.dumps(final_data)
     json_dims = json.dumps({"w": video_w, "h": video_h})
 
-    # 5. GENERAR HTML (Con JS de Agrupación, Ordenación, etc.)
     html_content = f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -416,7 +404,6 @@ def generar_html_multiprocess(txt_input, video_path, html_output):
         const grouping = grCheck.checked;
         
         let sorted = [...data];
-        
         sorted.sort((a, b) => {{
             if (prioritizeEs) {{
                 if (a.hasSpanish && !b.hasSpanish) return -1;
@@ -427,12 +414,10 @@ def generar_html_multiprocess(txt_input, video_path, html_output):
                 if (Math.abs(a.seconds - b.seconds) > 0.001) return a.seconds - b.seconds;
                 return b.conf - a.conf;
             }}
-            
             if (mode === 'conf') {{
                 if (Math.abs(a.conf - b.conf) > 0.001) return b.conf - a.conf;
                 return a.seconds - b.seconds;
             }}
-            
             if (mode === 'alpha') {{
                 const cmp = a.word.localeCompare(b.word);
                 if (cmp !== 0) return cmp;
@@ -507,7 +492,6 @@ if __name__ == "__main__":
     parser.add_argument("--video", required=True, help="Ruta al video")
     args = parser.parse_args()
     
-    # PROTECCIÓN NECESARIA PARA MULTIPROCESSING EN WINDOWS
     folder = os.path.dirname(args.input_txt)
     output_html = os.path.join(folder, "visor_resultados.html")
     
