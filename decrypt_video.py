@@ -76,24 +76,24 @@ def worker_segmento(id_proceso, video_path, start_frame, end_frame, output_folde
 
                             texto_limpio = texto_raw.strip().lower()
                             
-                            if len(texto_limpio) > 1:
-                                if texto_limpio not in textos_locales:
-                                    frame_tiene_novedad = True
-                                    textos_locales.add(texto_limpio)
-                                    
-                                    # Coordenadas exactas para el Zoom
-                                    x1, y1, x2, y2 = obtener_caja_coords(box)
-                                    
-                                    timestamp = calcular_tiempo(current_frame, fps)
-                                    nombre_img = f"frame_{current_frame}.jpg"
-                                    ruta_abs = os.path.abspath(os.path.join(output_folder, nombre_img))
-                                    link = f"file:///{ruta_abs.replace(os.sep, '/')}"
-                                    
-                                    # Formato con coordenadas [x1,y1,x2,y2]
-                                    linea_txt = f'"{texto_raw}" (Conf: {confianza:.2f}) - {timestamp} - [{x1},{y1},{x2},{y2}] - {link}\n'
-                                    lineas_buffer.append((current_frame, linea_txt))
+                            #if len(texto_limpio) > 1:
+                            if texto_limpio not in textos_locales:
+                                frame_tiene_novedad = True
+                                textos_locales.add(texto_limpio)
+                                
+                                # Coordenadas exactas para el Zoom
+                                x1, y1, x2, y2 = obtener_caja_coords(box)
+                                
+                                timestamp = calcular_tiempo(current_frame, fps)
+                                nombre_img = f"frame_{current_frame}.jpg"
+                                ruta_abs = os.path.abspath(os.path.join(output_folder, nombre_img))
+                                link = f"file:///{ruta_abs.replace(os.sep, '/')}"
+                                
+                                # Formato con coordenadas [x1,y1,x2,y2]
+                                linea_txt = f'"{texto_raw}" (Conf: {confianza:.2f}) - {timestamp} - [{x1},{y1},{x2},{y2}] - {link}\n'
+                                lineas_buffer.append((current_frame, linea_txt))
 
-                                cajas_para_pintar.append(box)
+                            cajas_para_pintar.append(box)
 
             if frame_tiene_novedad:
                 for box in cajas_para_pintar:
