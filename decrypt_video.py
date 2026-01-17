@@ -8,6 +8,7 @@ import numpy as np
 import argparse
 import sys
 from multiprocessing import Process, Manager
+import signal
 
 # Silenciar logs
 logging.getLogger("ppocr").setLevel(logging.WARNING)
@@ -28,8 +29,17 @@ def obtener_caja_coords(box):
     ys = [pt[1] for pt in box]
     return int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
 
+def obtener_centro(x1, y1, x2, y2):
+    return (x1 + x2) / 2, (y1 + y2) / 2
+
+def distancia_euclidiana(p1, p2):
+    return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
+
 # --- WORKER ---
 def worker_segmento(id_proceso, video_path, start_frame, end_frame, output_folder, frame_skip, min_conf_float, lista_resultados_compartida):
+    # Ignorar la señal de interrupción para limpieza manual
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    
     print(f"🔹 [Proceso {id_proceso}] Iniciado: Frames {start_frame} -> {end_frame}")
     
     try:
@@ -44,7 +54,15 @@ def worker_segmento(id_proceso, video_path, start_frame, end_frame, output_folde
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     current_frame = start_frame
     local_saved = 0
-    textos_locales = set()
+    
+    # --- NUEVO HISTORIAL DE DETECCIONES ---
+    # Diccionario: clave=palabra, valor={'frame': int, 'center': (x,y)}
+    historial_detecciones = {}
+    
+    # Configuración de re-detección
+    TIEMPO_REPETICION_SEG = 7
+    FRAMES_REPETICION = int(TIEMPO_REPETICION_SEG * fps)
+    DISTANCIA_MINIMA_PX = 150 # Si se mueve más de esto, se considera nueva instancia
 
     while current_frame < end_frame:
         ret, frame = cap.read()
@@ -76,24 +94,44 @@ def worker_segmento(id_proceso, video_path, start_frame, end_frame, output_folde
 
                             texto_limpio = texto_raw.strip().lower()
                             
-                            #if len(texto_limpio) > 1:
-                            if texto_limpio not in textos_locales:
-                                frame_tiene_novedad = True
-                                textos_locales.add(texto_limpio)
-                                
-                                # Coordenadas exactas para el Zoom
+                            # Filtro mínimo de longitud (evitar letras sueltas)
+                            if len(texto_limpio) > 1:
                                 x1, y1, x2, y2 = obtener_caja_coords(box)
+                                centro_actual = obtener_centro(x1, y1, x2, y2)
                                 
-                                timestamp = calcular_tiempo(current_frame, fps)
-                                nombre_img = f"frame_{current_frame}.jpg"
-                                ruta_abs = os.path.abspath(os.path.join(output_folder, nombre_img))
-                                link = f"file:///{ruta_abs.replace(os.sep, '/')}"
+                                # --- LÓGICA DE REPETICIÓN INTELIGENTE ---
+                                es_nueva_instancia = True
                                 
-                                # Formato con coordenadas [x1,y1,x2,y2]
-                                linea_txt = f'"{texto_raw}" (Conf: {confianza:.2f}) - {timestamp} - [{x1},{y1},{x2},{y2}] - {link}\n'
-                                lineas_buffer.append((current_frame, linea_txt))
+                                if texto_limpio in historial_detecciones:
+                                    ultima_vez = historial_detecciones[texto_limpio]
+                                    frames_pasados = current_frame - ultima_vez['frame']
+                                    distancia = distancia_euclidiana(centro_actual, ultima_vez['center'])
+                                    
+                                    # Si ha pasado poco tiempo Y está cerca... es repetida.
+                                    if frames_pasados < FRAMES_REPETICION and distancia < DISTANCIA_MINIMA_PX:
+                                        es_nueva_instancia = False
+                                        # (Opcional) Actualizamos la posición para seguir el rastro si se mueve lento
+                                        historial_detecciones[texto_limpio]['center'] = centro_actual
+                                        historial_detecciones[texto_limpio]['frame'] = current_frame
+                                
+                                if es_nueva_instancia:
+                                    frame_tiene_novedad = True
+                                    
+                                    # Registrar nueva aparición
+                                    historial_detecciones[texto_limpio] = {
+                                        'frame': current_frame,
+                                        'center': centro_actual
+                                    }
+                                    
+                                    timestamp = calcular_tiempo(current_frame, fps)
+                                    nombre_img = f"frame_{current_frame}.jpg"
+                                    ruta_abs = os.path.abspath(os.path.join(output_folder, nombre_img))
+                                    link = f"file:///{ruta_abs.replace(os.sep, '/')}"
+                                    
+                                    linea_txt = f'"{texto_raw}" (Conf: {confianza:.2f}) - {timestamp} - [{x1},{y1},{x2},{y2}] - {link}\n'
+                                    lineas_buffer.append((current_frame, linea_txt))
 
-                            cajas_para_pintar.append(box)
+                                cajas_para_pintar.append(box)
 
             if frame_tiene_novedad:
                 for box in cajas_para_pintar:
@@ -109,7 +147,6 @@ def worker_segmento(id_proceso, video_path, start_frame, end_frame, output_folde
 
         current_frame += 1
         
-        # Feedback sin pausas
         if (current_frame - start_frame) % 100 == 0:
             progreso = ((current_frame - start_frame) / (end_frame - start_frame)) * 100
             print(f"⚙️  [Proc {id_proceso}] {progreso:.0f}%", end='\r')
@@ -119,7 +156,7 @@ def worker_segmento(id_proceso, video_path, start_frame, end_frame, output_folde
 
 
 def procesar_multiprocess(video_path, root_folder, frame_skip, num_procesos, min_conf_percent):
-    print(f"\n🚀 MODO MAX PERFORMANCE | Filtro Confianza: >{min_conf_percent}%")
+    print(f"\n🚀 MODO RE-DETECCIÓN INTELIGENTE (7s / Distancia)")
     
     if not os.path.exists(video_path):
         print("❌ Video no encontrado")
@@ -134,7 +171,6 @@ def procesar_multiprocess(video_path, root_folder, frame_skip, num_procesos, min
 
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    # Datos para el visor HTML
     video_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     video_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
@@ -157,12 +193,11 @@ def procesar_multiprocess(video_path, root_folder, frame_skip, num_procesos, min
         p.start()
         procesos.append(p)
 
-    # --- ESPERA BLOQUEANTE (SIN SLEEP) ---
-    # Esto es lo más rápido posible. El padre duerme hasta que los hijos acaban.
+    # --- ESPERA BLOQUEANTE ---
     for p in procesos:
         p.join()
 
-    # --- FUSIÓN Y GENERACIÓN DE TXT ---
+    # --- FUSIÓN ---
     if len(lista_resultados) > 0:
         print("\n📦 Fusionando resultados...")
         resultados_ordenados = list(lista_resultados)
@@ -170,7 +205,6 @@ def procesar_multiprocess(video_path, root_folder, frame_skip, num_procesos, min
 
         txt_path = os.path.join(final_output_folder, "registro_detectado.txt")
         with open(txt_path, "w", encoding="utf-8") as f:
-            # Cabecera con resolución para el HTML
             f.write(f"VIDEO_INFO: {filename_sin_ext} | RES: {video_w}x{video_h}\n")
             f.write("PALABRA | TIEMPO | [X1,Y1,X2,Y2] | FRAME\n")
             f.write("-" * 80 + "\n")
