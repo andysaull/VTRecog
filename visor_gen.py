@@ -2,6 +2,10 @@ import os
 import re
 import argparse
 import json
+import time
+from multiprocessing import Pool, cpu_count
+
+# --- FUNCIONES AUXILIARES (Ligeras) ---
 
 def parsear_header(linea):
     match = re.search(r'RES: (\d+)x(\d+)', linea)
@@ -21,6 +25,7 @@ def time_to_seconds(time_str):
         return 0.0
 
 def parsear_linea(linea):
+    # Formato: "PALABRA" (Conf: 0.99) - HH:MM:SS:mmm - [x1,y1,x2,y2] - file:///...
     patron = r'"(.*?)" \(Conf: ([\d.]+)\) - ([\d:.]+) - \[(\d+),(\d+),(\d+),(\d+)\] - (file:.*)'
     match = re.search(patron, linea)
     if match:
@@ -47,37 +52,54 @@ def cargar_diccionario(ruta_diccionario):
         with open(ruta_diccionario, "r", encoding="utf-8") as f:
             for linea in f:
                 w = linea.strip().upper()
+                # Filtramos palabras muy cortas
                 if len(w) > 3: 
                     palabras.append(w)
+        # Ordenar por longitud es vital para que el regex funcione bien
         palabras.sort(key=len, reverse=True)
     else:
         print("⚠️ NO SE ENCONTRÓ diccionario_es.txt.")
         palabras = "HOLA ADIOS COCHE CASA".split()
     return palabras
 
-def procesar_coincidencias(data, diccionario):
-    print("🔍 Analizando español...")
-    for item in data:
+# --- LÓGICA DEL WORKER (Proceso Hijo) ---
+def worker_procesar_chunk(chunk_data, diccionario):
+    """
+    Esta función se ejecuta en paralelo en cada núcleo.
+    Recibe un trozo de la lista de datos y el diccionario completo.
+    """
+    processed_chunk = []
+    
+    # Compilamos regexes básicos si fuera necesario, pero como el diccionario cambia...
+    # Iteramos sobre los datos
+    for item in chunk_data:
         original_word = item['word']
         upper_word = original_word.upper()
         item['hasSpanish'] = False
         item['displayHtml'] = original_word
         
+        # Solo buscamos si la palabra es suficientemente larga para contener algo útil
         if len(upper_word) > 3:
             for dict_word in diccionario:
                 if dict_word in upper_word:
                     item['hasSpanish'] = True
+                    # Reemplazo Case Insensitive
                     regex = re.compile(re.escape(dict_word), re.IGNORECASE)
                     item['displayHtml'] = regex.sub(r'<span class="highlight">\g<0></span>', original_word)
                     break
-    return data
+        
+        processed_chunk.append(item)
+        
+    return processed_chunk
 
-def generar_html(txt_input, video_path, html_output):
+# --- FUNCIÓN PRINCIPAL DE ORQUESTACIÓN ---
+def generar_html_multiprocess(txt_input, video_path, html_output):
     print(f"📖 Leyendo reporte: {txt_input}")
     
-    data = []
+    raw_data = []
     video_w, video_h = 1920, 1080 
     
+    # 1. LEER TXT
     if os.path.exists(txt_input):
         with open(txt_input, "r", encoding="utf-8") as f:
             header = f.readline()
@@ -88,29 +110,59 @@ def generar_html(txt_input, video_path, html_output):
             for line in f:
                 parsed = parsear_linea(line)
                 if parsed:
-                    data.append(parsed)
+                    raw_data.append(parsed)
     else:
         print("❌ Error: No se encuentra el TXT")
         return
 
+    total_words = len(raw_data)
+    print(f"📋 Total palabras detectadas: {total_words}")
+
+    # 2. CARGAR DICCIONARIO
     script_dir = os.path.dirname(os.path.abspath(__file__))
     dicc_path = os.path.join(script_dir, "diccionario_es.txt")
     diccionario = cargar_diccionario(dicc_path)
-    data = procesar_coincidencias(data, diccionario)
+    print(f"📖 Diccionario cargado: {len(diccionario)} términos.")
+
+    # 3. MULTIPROCESSING: BÚSQUEDA DE ESPAÑOL
+    num_cores = cpu_count()
+    print(f"🚀 Iniciando análisis paralelo con {num_cores} núcleos...")
     
+    start_time = time.time()
+    
+    # Dividir datos en chunks
+    chunk_size = (total_words // num_cores) + 1
+    chunks = [raw_data[i:i + chunk_size] for i in range(0, total_words, chunk_size)]
+    
+    # Preparar argumentos para starmap: [(chunk1, dicc), (chunk2, dicc), ...]
+    pool_args = [(chunk, diccionario) for chunk in chunks]
+    
+    with Pool(processes=num_cores) as pool:
+        # Ejecutar en paralelo
+        results = pool.starmap(worker_procesar_chunk, pool_args)
+    
+    # Aplanar la lista de resultados (lista de listas -> lista única)
+    final_data = [item for sublist in results for item in sublist]
+    
+    elapsed = time.time() - start_time
+    count_spanish = sum(1 for x in final_data if x['hasSpanish'])
+    print(f"✅ Análisis completado en {elapsed:.2f}s. Detectadas {count_spanish} palabras en español.")
+
+    # 4. PREPARAR DATOS PARA HTML
     abs_video_path = os.path.abspath(video_path).replace(os.sep, '/')
     video_src = f"file:///{abs_video_path}"
 
-    json_data = json.dumps(data)
+    json_data = json.dumps(final_data)
     json_dims = json.dumps({"w": video_w, "h": video_h})
 
+    # 5. GENERAR HTML (Con JS de Agrupación, Ordenación, etc.)
     html_content = f"""
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visor OCR Avanzado</title>
+    <title>Visor OCR Final</title>
     <style>
         :root {{ --bg-dark: #1e1e1e; --bg-panel: #252526; --text-main: #d4d4d4; --accent: #007acc; --border: #3e3e42; --brace: #dcdcaa; --highlight: #ff4d4d; }}
         body {{ margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg-dark); color: var(--text-main); overflow: hidden; height: 100vh; display: flex; }}
@@ -365,37 +417,27 @@ def generar_html(txt_input, video_path, html_output):
         
         let sorted = [...data];
         
-        // --- ORDENACIÓN CON DESEMPATES ---
         sorted.sort((a, b) => {{
-            // 1. Prioridad Español
             if (prioritizeEs) {{
                 if (a.hasSpanish && !b.hasSpanish) return -1;
                 if (!a.hasSpanish && b.hasSpanish) return 1;
             }}
             
-            // 2. Criterios de Usuario + Desempates
             if (mode === 'time') {{
-                // Principal: Tiempo Ascendente
                 if (Math.abs(a.seconds - b.seconds) > 0.001) return a.seconds - b.seconds;
-                // Desempate: Confianza Descendente
                 return b.conf - a.conf;
             }}
             
             if (mode === 'conf') {{
-                // Principal: Confianza Descendente
                 if (Math.abs(a.conf - b.conf) > 0.001) return b.conf - a.conf;
-                // Desempate: Tiempo Ascendente
                 return a.seconds - b.seconds;
             }}
             
             if (mode === 'alpha') {{
-                // Principal: Alfabético Ascendente
                 const cmp = a.word.localeCompare(b.word);
                 if (cmp !== 0) return cmp;
-                // Desempate: Tiempo Ascendente
                 return a.seconds - b.seconds;
             }}
-            
             return 0; 
         }});
 
@@ -464,6 +506,9 @@ if __name__ == "__main__":
     parser.add_argument("input_txt", help="Ruta al txt")
     parser.add_argument("--video", required=True, help="Ruta al video")
     args = parser.parse_args()
+    
+    # PROTECCIÓN NECESARIA PARA MULTIPROCESSING EN WINDOWS
     folder = os.path.dirname(args.input_txt)
     output_html = os.path.join(folder, "visor_resultados.html")
-    generar_html(args.input_txt, args.video, output_html)
+    
+    generar_html_multiprocess(args.input_txt, args.video, output_html)
