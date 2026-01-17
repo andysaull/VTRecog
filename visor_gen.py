@@ -4,14 +4,12 @@ import argparse
 import json
 
 def parsear_header(linea):
-    """Busca la resolución en la cabecera: RES: 1920x1080"""
     match = re.search(r'RES: (\d+)x(\d+)', linea)
     if match:
         return int(match.group(1)), int(match.group(2))
     return None, None
 
 def time_to_seconds(time_str):
-    """Convierte HH:MM:SS:mmm a segundos (float)"""
     try:
         parts = time_str.split(':')
         h = int(parts[0])
@@ -23,10 +21,8 @@ def time_to_seconds(time_str):
         return 0.0
 
 def parsear_linea(linea):
-    # Formato: "PALABRA" (Conf: 0.99) - HH:MM:SS:mmm - [x1,y1,x2,y2] - file:///...
     patron = r'"(.*?)" \(Conf: ([\d.]+)\) - ([\d:.]+) - \[(\d+),(\d+),(\d+),(\d+)\] - (file:.*)'
     match = re.search(patron, linea)
-    
     if match:
         time_str = match.group(3)
         return {
@@ -67,7 +63,6 @@ def procesar_coincidencias(data, diccionario):
         item['hasSpanish'] = False
         item['displayHtml'] = original_word
         
-        # Filtro básico de longitud para evitar buscar en ruido corto
         if len(upper_word) > 3:
             for dict_word in diccionario:
                 if dict_word in upper_word:
@@ -115,42 +110,77 @@ def generar_html(txt_input, video_path, html_output):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visor OCR Agrupado</title>
+    <title>Visor OCR Final</title>
     <style>
         :root {{ --bg-dark: #1e1e1e; --bg-panel: #252526; --text-main: #d4d4d4; --accent: #007acc; --border: #3e3e42; --brace: #dcdcaa; --highlight: #ff4d4d; }}
         body {{ margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg-dark); color: var(--text-main); overflow: hidden; height: 100vh; display: flex; }}
         
-        .sidebar {{ width: 500px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 50; }}
+        .sidebar {{ width: 520px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 50; }}
         
-        .controls {{ padding: 15px; background: #2d2d30; border-bottom: 1px solid var(--border); }}
+        .controls {{ padding: 15px; background: #2d2d30; border-bottom: 1px solid var(--border); box-shadow: 0 2px 5px rgba(0,0,0,0.2); }}
         .controls label {{ display: block; margin-top: 10px; font-size: 14px; cursor: pointer; user-select: none; }}
         select {{ width: 100%; padding: 8px; background: #3c3c3c; color: white; border: 1px solid #555; outline: none; }}
         
-        .list-container {{ flex: 1; overflow-y: auto; }}
+        .list-container {{ flex: 1; overflow-y: auto; padding-bottom: 20px; }}
         
-        /* ITEMS */
+        /* ITEMS INDIVIDUALES (ZEBRA STRIPING) */
         .list-item {{ 
-            padding: 8px 15px; cursor: pointer; border-left: 3px solid transparent; 
+            padding: 8px 15px; cursor: pointer; 
+            border-left: 3px solid transparent; 
             display: flex; align-items: center; justify-content: space-between; 
-            position: relative; transition: 0.1s; border-bottom: 1px solid #333; 
+            position: relative; transition: 0.1s; 
+            border-bottom: 1px solid #333;
         }}
-        .list-item:hover {{ background: #37373d; border-left-color: var(--accent); }}
         
-        /* ESTILOS DE GRUPO */
-        .group-header {{ background: #2a2a2d; }}
-        .group-children {{ display: none; background: #1e1e1e; border-left: 15px solid #252526; }}
-        .group-children .list-item {{ border-bottom: 1px solid #2a2a2a; padding-left: 10px; }}
+        /* Color alterno para filas normales (sin agrupar) */
+        .list-item:nth-child(odd) {{ background-color: rgba(255,255,255,0.02); }}
+        .list-item:nth-child(even) {{ background-color: rgba(0,0,0,0.1); }}
         
+        .list-item:hover {{ background-color: #37373d !important; border-left-color: var(--accent); }}
+
+        /* --- ESTILOS DE AGRUPACIÓN (RELIEVE) --- */
+        
+        /* Contenedor principal del grupo */
+        .group-wrapper {{
+            margin: 6px 4px;
+            background-color: #202022;
+            border: 2px solid #555;
+            border-left: 6px solid #dcdcaa; /* Borde grueso lateral */
+            border-radius: 4px;
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.4); /* Sombra relieve */
+            overflow: hidden;
+            transition: all 0.2s;
+        }}
+        
+        /* Cuando el grupo está dentro del wrapper, quitamos el borde inferior del último hijo para que cierre limpio */
+        .group-wrapper .list-item:last-child {{ border-bottom: none; }}
+        
+        /* Cabecera del grupo (el líder) */
+        .group-header {{ background-color: #2a2a2d; font-weight: bold; }}
+        
+        /* Hijos del grupo (desplegable) */
+        .group-children {{ display: none; background: #181818; }}
+        .group-children .list-item {{ 
+            padding-left: 25px; 
+            border-bottom: 1px solid #2a2a2a; 
+            font-size: 0.95em;
+            color: #bbb;
+        }}
+        
+        /* Botón de expandir */
         .expand-btn {{
-            cursor: pointer; padding: 2px 8px; font-size: 12px; color: #aaa;
+            cursor: pointer; padding: 4px 8px; font-size: 12px; color: #aaa;
             display: flex; align-items: center; gap: 5px;
+            background: rgba(0,0,0,0.3); border-radius: 4px; margin-left: 5px;
         }}
-        .expand-btn:hover {{ color: #fff; }}
+        .expand-btn:hover {{ color: #fff; background: rgba(255,255,255,0.1); }}
         .arrow {{ transition: transform 0.2s; display: inline-block; }}
-        .count-badge {{ background: #444; border-radius: 10px; padding: 0 6px; font-size: 10px; }}
+        .count-badge {{ background: #007acc; color: white; border-radius: 10px; padding: 0 6px; font-size: 10px; font-weight: bold; }}
         
+        /* Estado Expandido */
         .expanded .arrow {{ transform: rotate(180deg); }}
         .expanded + .group-children {{ display: block; }}
+
 
         /* BOTONES ACCIÓN */
         .actions {{ display: flex; gap: 5px; margin-right: 10px; min-width: 60px; }}
@@ -164,7 +194,7 @@ def generar_html(txt_input, video_path, html_output):
         .copied {{ background: #4ec9b0 !important; color: #000 !important; }}
 
         .word-content {{ flex: 1; min-width: 0; }}
-        .word-text {{ font-size: 14px; font-weight: bold; color: #fff; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+        .word-text {{ font-size: 14px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
         .meta-info {{ font-size: 11px; color: #888; margin-top: 2px; }}
         .conf-badge {{ background: #333; padding: 1px 4px; border-radius: 3px; color: #4ec9b0; margin-right: 8px; }}
         .highlight {{ color: var(--highlight); text-shadow: 0 0 10px rgba(255, 77, 77, 0.2); font-weight: 900; }}
@@ -178,11 +208,9 @@ def generar_html(txt_input, video_path, html_output):
         /* DERECHA */
         .right-panel {{ flex: 1; position: relative; background: #000; overflow: hidden; }}
         .video-overlay {{
-            position: absolute; top: 0; right: 0;
-            width: 480px; z-index: 100;
+            position: absolute; top: 0; right: 0; width: 480px; z-index: 100;
             background: #000; border-bottom: 2px solid #333; border-left: 2px solid #333;
-            box-shadow: -5px 5px 20px rgba(0,0,0,0.8); opacity: 0.9;
-            transition: opacity 0.3s;
+            box-shadow: -5px 5px 20px rgba(0,0,0,0.8); opacity: 0.9; transition: opacity 0.3s;
         }}
         .video-overlay:hover {{ opacity: 1; }}
         video {{ width: 100%; display: block; }}
@@ -243,9 +271,6 @@ def generar_html(txt_input, video_path, html_output):
     const modalImg = document.getElementById('modal-img');
     const video = document.getElementById('mainVideo');
 
-    // --- ALGORITMOS DE SIMILITUD ---
-    
-    // Levenshtein Distance
     function levenshtein(a, b) {{
         if (a.length === 0) return b.length;
         if (b.length === 0) return a.length;
@@ -262,46 +287,28 @@ def generar_html(txt_input, video_path, html_output):
     }}
 
     function areWordsSimilar(w1, w2) {{
-        w1 = w1.toUpperCase();
-        w2 = w2.toUpperCase();
+        w1 = w1.toUpperCase(); w2 = w2.toUpperCase();
         if (w1 === w2) return true;
-        
         const maxLen = Math.max(w1.length, w2.length);
         if (maxLen === 0) return true;
-        
         const dist = levenshtein(w1, w2);
         const similarity = 1 - (dist / maxLen);
-        
-        // Umbral dinámico:
-        // Palabras cortas (<5) necesitan ser muy parecidas (0.8 = 80%)
-        // Frases largas permiten más errores (0.7 = 70%)
         let threshold = 0.8; 
         if (maxLen > 10) threshold = 0.7;
-        
-        // Regla dura: VACA != BAKA (Distancia fonética no implementada, 
-        // pero Levenshtein VACA-BAKA es dist=2, len=4, sim=0.5 -> NO AGRUPA)
-        // COCHE-COSHE (dist=1, len=5, sim=0.8 -> AGRUPA)
-        
         return similarity >= threshold;
     }}
 
-    // --- AGRUPACIÓN LÉXICA ---
     function groupData(items) {{
         const groups = [];
         const processedIndices = new Set();
-
         for (let i = 0; i < items.length; i++) {{
             if (processedIndices.has(i)) continue;
-            
             const leader = items[i];
             const group = {{ leader: leader, children: [] }};
             processedIndices.add(i);
-
             for (let j = i + 1; j < items.length; j++) {{
                 if (processedIndices.has(j)) continue;
-                
                 const candidate = items[j];
-                // Comparamos el candidato con el LÍDER del grupo
                 if (areWordsSimilar(leader.word, candidate.word)) {{
                     group.children.push(candidate);
                     processedIndices.add(j);
@@ -328,26 +335,24 @@ def generar_html(txt_input, video_path, html_output):
     }}
 
     function copyMetadata(item, btnElement) {{
-        const textToCopy = `"${{item.word}}" (Conf: ${{item.conf.toFixed(2)}}) - ${{item.time}} - [${{item.box.x1}},${{item.box.y1}},${{item.box.x2}},${{item.box.y2}}] - ${{item.src}}`;
-        const textarea = document.createElement("textarea");
-        textarea.value = textToCopy;
-        document.body.appendChild(textarea);
-        textarea.select();
+        const text = `"${{item.word}}" (Conf: ${{item.conf.toFixed(2)}}) - ${{item.time}} - [${{item.box.x1}},${{item.box.y1}},${{item.box.x2}},${{item.box.y2}}] - ${{item.src}}`;
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
         try {{
             document.execCommand("copy");
             const originalText = btnElement.innerText;
             btnElement.innerText = "✓";
             btnElement.classList.add("copied");
             setTimeout(() => {{ btnElement.innerText = originalText; btnElement.classList.remove("copied"); }}, 1000);
-        }} catch (err) {{ alert("Error copiando"); }}
-        document.body.removeChild(textarea);
+        }} catch (e) {{}}
+        document.body.removeChild(ta);
     }}
 
-    function createItemDOM(item, isChild) {{
+    function createItemDOM(item) {{
         const div = document.createElement('div');
         div.className = 'list-item';
-        if (isChild) div.classList.add('child-item');
-        
         div.innerHTML = `
             <div class="actions">
                 <div class="icon-btn play-btn" title="Ver clip">▶</div>
@@ -362,32 +367,22 @@ def generar_html(txt_input, video_path, html_output):
             </div>
             <div class="bracket"></div>
         `;
-
-        // Listeners
         div.querySelector('.play-btn').addEventListener('click', (e) => {{ e.stopPropagation(); playSegment(item.seconds); }});
         div.querySelector('.copy-btn').addEventListener('click', (e) => {{ e.stopPropagation(); copyMetadata(item, div.querySelector('.copy-btn')); }});
-        
         div.addEventListener('mouseenter', () => {{
-            phEl.style.display = 'none';
-            imgEl.style.display = 'block';
-            imgEl.src = item.src;
-
+            phEl.style.display = 'none'; imgEl.style.display = 'block'; imgEl.src = item.src;
             const boxW = item.box.x2 - item.box.x1;
             const boxH = item.box.y2 - item.box.y1;
             const centerX = item.box.x1 + (boxW / 2);
             const centerY = item.box.y1 + (boxH / 2);
-            
             const originX = (centerX / dims.w) * 100;
             const originY = (centerY / dims.h) * 100;
-            const scaleX = dims.w / boxW;
-            const scaleY = dims.h / boxH;
+            const scaleX = dims.w / boxW; const scaleY = dims.h / boxH;
             let scale = Math.min(scaleX, scaleY) * 0.35; 
             if (scale < 1) scale = 1; if (scale > 5) scale = 5; 
-
             imgEl.style.transformOrigin = `${{originX}}% ${{originY}}%`;
             imgEl.style.transform = `scale(${{scale}})`;
         }});
-
         div.addEventListener('click', () => {{ modal.style.display = 'flex'; modalImg.src = item.src; }});
         return div;
     }}
@@ -399,7 +394,6 @@ def generar_html(txt_input, video_path, html_output):
         const grouping = grCheck.checked;
         
         let sorted = [...data];
-        
         sorted.sort((a, b) => {{
             if (prioritizeEs) {{
                 if (a.hasSpanish && !b.hasSpanish) return -1;
@@ -407,58 +401,46 @@ def generar_html(txt_input, video_path, html_output):
             }}
             if (mode === 'conf') return b.conf - a.conf;
             if (mode === 'alpha') return a.word.localeCompare(b.word);
-            return 0; // time
+            return 0;
         }});
 
-        // SI LA AGRUPACIÓN ESTÁ ACTIVA
         if (grouping) {{
             const groups = groupData(sorted);
-            
             groups.forEach(group => {{
-                // Renderizar LIDER
-                const leaderDiv = createItemDOM(group.leader, false);
-                
-                // Si tiene hijos, añadimos controles de grupo
+                // Si es un grupo real (tiene hijos) usamos el WRAPPER CON BORDE
                 if (group.children.length > 0) {{
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'group-wrapper';
+
+                    const leaderDiv = createItemDOM(group.leader);
                     leaderDiv.classList.add('group-header');
-                    
-                    // Crear botón de expansión
+
                     const expandDiv = document.createElement('div');
                     expandDiv.className = 'expand-btn';
                     expandDiv.innerHTML = `<span class="count-badge">+${{group.children.length}}</span> <span class="arrow">▼</span>`;
-                    
-                    // Contenedor de hijos
+                    leaderDiv.querySelector('.word-content').appendChild(expandDiv);
+
                     const childrenContainer = document.createElement('div');
                     childrenContainer.className = 'group-children';
-                    
-                    group.children.forEach(child => {{
-                        const childDiv = createItemDOM(child, true);
-                        childrenContainer.appendChild(childDiv);
-                    }});
+                    group.children.forEach(child => childrenContainer.appendChild(createItemDOM(child)));
 
-                    // Evento Toggle
                     expandDiv.addEventListener('click', (e) => {{
                         e.stopPropagation();
                         leaderDiv.classList.toggle('expanded');
                     }});
-                    
-                    // Añadimos el botón a la derecha del contenido
-                    leaderDiv.querySelector('.word-content').appendChild(expandDiv);
-                    
-                    // Añadimos todo al DOM
-                    listEl.appendChild(leaderDiv);
-                    listEl.appendChild(childrenContainer);
+
+                    wrapper.appendChild(leaderDiv);
+                    wrapper.appendChild(childrenContainer);
+                    listEl.appendChild(wrapper);
+
                 }} else {{
-                    listEl.appendChild(leaderDiv);
+                    // Si no tiene hijos, es un item suelto (sin borde grueso)
+                    listEl.appendChild(createItemDOM(group.leader));
                 }}
             }});
-
         }} else {{
-            // RENDERIZADO PLANO (Sin agrupar)
             sorted.forEach((item, i) => {{
-                const div = createItemDOM(item, false);
-                
-                // Llaves de frame (solo en plano)
+                const div = createItemDOM(item);
                 if (mode === 'time' && !prioritizeEs) {{
                     const p = sorted[i-1]; const n = sorted[i+1];
                     const sameP = p && p.src === item.src;
@@ -476,25 +458,20 @@ def generar_html(txt_input, video_path, html_output):
     esCheck.addEventListener('change', render);
     grCheck.addEventListener('change', render);
     modal.addEventListener('click', () => modal.style.display = 'none');
-    
     render();
 </script>
 </body>
 </html>
     """
-
     with open(html_output, "w", encoding="utf-8") as f:
         f.write(html_content)
-    
-    print(f"🚀 Visor PRO (Agrupación) generado en: {html_output}")
+    print(f"🚀 Visor Final generado: {html_output}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("input_txt", help="Ruta al txt")
     parser.add_argument("--video", required=True, help="Ruta al video")
     args = parser.parse_args()
-    
     folder = os.path.dirname(args.input_txt)
     output_html = os.path.join(folder, "visor_resultados.html")
-    
     generar_html(args.input_txt, args.video, output_html)
