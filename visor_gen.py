@@ -110,7 +110,7 @@ def generar_html(txt_input, video_path, html_output):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visor OCR Final</title>
+    <title>Visor OCR Avanzado</title>
     <style>
         :root {{ --bg-dark: #1e1e1e; --bg-panel: #252526; --text-main: #d4d4d4; --accent: #007acc; --border: #3e3e42; --brace: #dcdcaa; --highlight: #ff4d4d; }}
         body {{ margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg-dark); color: var(--text-main); overflow: hidden; height: 100vh; display: flex; }}
@@ -123,51 +123,26 @@ def generar_html(txt_input, video_path, html_output):
         
         .list-container {{ flex: 1; overflow-y: auto; padding-bottom: 20px; }}
         
-        /* ITEMS INDIVIDUALES (ZEBRA STRIPING) */
         .list-item {{ 
-            padding: 8px 15px; cursor: pointer; 
-            border-left: 3px solid transparent; 
+            padding: 8px 15px; cursor: pointer; border-left: 3px solid transparent; 
             display: flex; align-items: center; justify-content: space-between; 
-            position: relative; transition: 0.1s; 
-            border-bottom: 1px solid #333;
+            position: relative; transition: 0.1s; border-bottom: 1px solid #333;
         }}
-        
-        /* Color alterno para filas normales (sin agrupar) */
         .list-item:nth-child(odd) {{ background-color: rgba(255,255,255,0.02); }}
         .list-item:nth-child(even) {{ background-color: rgba(0,0,0,0.1); }}
-        
         .list-item:hover {{ background-color: #37373d !important; border-left-color: var(--accent); }}
 
-        /* --- ESTILOS DE AGRUPACIÓN (RELIEVE) --- */
-        
-        /* Contenedor principal del grupo */
+        /* AGRUPACIÓN */
         .group-wrapper {{
-            margin: 6px 4px;
-            background-color: #202022;
-            border: 2px solid #555;
-            border-left: 6px solid #dcdcaa; /* Borde grueso lateral */
-            border-radius: 4px;
-            box-shadow: 2px 2px 8px rgba(0,0,0,0.4); /* Sombra relieve */
-            overflow: hidden;
-            transition: all 0.2s;
+            margin: 6px 4px; background-color: #202022; border: 2px solid #555;
+            border-left: 6px solid #dcdcaa; border-radius: 4px;
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.4); overflow: hidden; transition: all 0.2s;
         }}
-        
-        /* Cuando el grupo está dentro del wrapper, quitamos el borde inferior del último hijo para que cierre limpio */
         .group-wrapper .list-item:last-child {{ border-bottom: none; }}
-        
-        /* Cabecera del grupo (el líder) */
         .group-header {{ background-color: #2a2a2d; font-weight: bold; }}
-        
-        /* Hijos del grupo (desplegable) */
         .group-children {{ display: none; background: #181818; }}
-        .group-children .list-item {{ 
-            padding-left: 25px; 
-            border-bottom: 1px solid #2a2a2a; 
-            font-size: 0.95em;
-            color: #bbb;
-        }}
+        .group-children .list-item {{ padding-left: 25px; border-bottom: 1px solid #2a2a2a; font-size: 0.95em; color: #bbb; }}
         
-        /* Botón de expandir */
         .expand-btn {{
             cursor: pointer; padding: 4px 8px; font-size: 12px; color: #aaa;
             display: flex; align-items: center; gap: 5px;
@@ -176,13 +151,10 @@ def generar_html(txt_input, video_path, html_output):
         .expand-btn:hover {{ color: #fff; background: rgba(255,255,255,0.1); }}
         .arrow {{ transition: transform 0.2s; display: inline-block; }}
         .count-badge {{ background: #007acc; color: white; border-radius: 10px; padding: 0 6px; font-size: 10px; font-weight: bold; }}
-        
-        /* Estado Expandido */
         .expanded .arrow {{ transform: rotate(180deg); }}
         .expanded + .group-children {{ display: block; }}
 
-
-        /* BOTONES ACCIÓN */
+        /* ACCIONES */
         .actions {{ display: flex; gap: 5px; margin-right: 10px; min-width: 60px; }}
         .icon-btn {{
             background: #2d2d30; border: 1px solid #555; color: #fff;
@@ -199,13 +171,11 @@ def generar_html(txt_input, video_path, html_output):
         .conf-badge {{ background: #333; padding: 1px 4px; border-radius: 3px; color: #4ec9b0; margin-right: 8px; }}
         .highlight {{ color: var(--highlight); text-shadow: 0 0 10px rgba(255, 77, 77, 0.2); font-weight: 900; }}
 
-        /* LLAVES */
         .bracket {{ position: absolute; right: 2px; width: 6px; border-color: var(--brace); display: none; opacity: 0.7; }}
         .g-start .bracket {{ display: block; height: 50%; top: 50%; border-top: 2px solid; border-right: 2px solid; border-top-right-radius: 6px; }}
         .g-mid .bracket {{ display: block; height: 100%; top: 0; border-right: 2px solid; }}
         .g-end .bracket {{ display: block; height: 50%; top: 0; border-bottom: 2px solid; border-right: 2px solid; border-bottom-right-radius: 6px; }}
 
-        /* DERECHA */
         .right-panel {{ flex: 1; position: relative; background: #000; overflow: hidden; }}
         .video-overlay {{
             position: absolute; top: 0; right: 0; width: 480px; z-index: 100;
@@ -394,20 +364,44 @@ def generar_html(txt_input, video_path, html_output):
         const grouping = grCheck.checked;
         
         let sorted = [...data];
+        
+        // --- ORDENACIÓN CON DESEMPATES ---
         sorted.sort((a, b) => {{
+            // 1. Prioridad Español
             if (prioritizeEs) {{
                 if (a.hasSpanish && !b.hasSpanish) return -1;
                 if (!a.hasSpanish && b.hasSpanish) return 1;
             }}
-            if (mode === 'conf') return b.conf - a.conf;
-            if (mode === 'alpha') return a.word.localeCompare(b.word);
-            return 0;
+            
+            // 2. Criterios de Usuario + Desempates
+            if (mode === 'time') {{
+                // Principal: Tiempo Ascendente
+                if (Math.abs(a.seconds - b.seconds) > 0.001) return a.seconds - b.seconds;
+                // Desempate: Confianza Descendente
+                return b.conf - a.conf;
+            }}
+            
+            if (mode === 'conf') {{
+                // Principal: Confianza Descendente
+                if (Math.abs(a.conf - b.conf) > 0.001) return b.conf - a.conf;
+                // Desempate: Tiempo Ascendente
+                return a.seconds - b.seconds;
+            }}
+            
+            if (mode === 'alpha') {{
+                // Principal: Alfabético Ascendente
+                const cmp = a.word.localeCompare(b.word);
+                if (cmp !== 0) return cmp;
+                // Desempate: Tiempo Ascendente
+                return a.seconds - b.seconds;
+            }}
+            
+            return 0; 
         }});
 
         if (grouping) {{
             const groups = groupData(sorted);
             groups.forEach(group => {{
-                // Si es un grupo real (tiene hijos) usamos el WRAPPER CON BORDE
                 if (group.children.length > 0) {{
                     const wrapper = document.createElement('div');
                     wrapper.className = 'group-wrapper';
@@ -432,9 +426,7 @@ def generar_html(txt_input, video_path, html_output):
                     wrapper.appendChild(leaderDiv);
                     wrapper.appendChild(childrenContainer);
                     listEl.appendChild(wrapper);
-
                 }} else {{
-                    // Si no tiene hijos, es un item suelto (sin borde grueso)
                     listEl.appendChild(createItemDOM(group.leader));
                 }}
             }});
