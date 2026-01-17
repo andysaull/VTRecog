@@ -67,6 +67,7 @@ def procesar_coincidencias(data, diccionario):
         item['hasSpanish'] = False
         item['displayHtml'] = original_word
         
+        # Filtro básico de longitud para evitar buscar en ruido corto
         if len(upper_word) > 3:
             for dict_word in diccionario:
                 if dict_word in upper_word:
@@ -114,73 +115,79 @@ def generar_html(txt_input, video_path, html_output):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visor OCR Overlay</title>
+    <title>Visor OCR Agrupado</title>
     <style>
         :root {{ --bg-dark: #1e1e1e; --bg-panel: #252526; --text-main: #d4d4d4; --accent: #007acc; --border: #3e3e42; --brace: #dcdcaa; --highlight: #ff4d4d; }}
         body {{ margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg-dark); color: var(--text-main); overflow: hidden; height: 100vh; display: flex; }}
         
-        .sidebar {{ width: 450px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 50; }}
+        .sidebar {{ width: 500px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 50; }}
         
         .controls {{ padding: 15px; background: #2d2d30; border-bottom: 1px solid var(--border); }}
-        .controls label {{ display: block; margin-top: 10px; font-size: 14px; cursor: pointer; }}
+        .controls label {{ display: block; margin-top: 10px; font-size: 14px; cursor: pointer; user-select: none; }}
         select {{ width: 100%; padding: 8px; background: #3c3c3c; color: white; border: 1px solid #555; outline: none; }}
         
         .list-container {{ flex: 1; overflow-y: auto; }}
-        .list-item {{ padding: 8px 15px; cursor: pointer; border-left: 3px solid transparent; display: flex; align-items: center; justify-content: space-between; position: relative; transition: 0.1s; border-bottom: 1px solid #333; }}
+        
+        /* ITEMS */
+        .list-item {{ 
+            padding: 8px 15px; cursor: pointer; border-left: 3px solid transparent; 
+            display: flex; align-items: center; justify-content: space-between; 
+            position: relative; transition: 0.1s; border-bottom: 1px solid #333; 
+        }}
         .list-item:hover {{ background: #37373d; border-left-color: var(--accent); }}
         
-        .word-content {{ flex: 1; }}
-        .word-text {{ font-size: 15px; font-weight: bold; color: #fff; display: block; }}
-        .meta-info {{ font-size: 12px; color: #888; margin-top: 3px; }}
-        .conf-badge {{ background: #333; padding: 2px 5px; border-radius: 3px; color: #4ec9b0; margin-right: 8px; }}
+        /* ESTILOS DE GRUPO */
+        .group-header {{ background: #2a2a2d; }}
+        .group-children {{ display: none; background: #1e1e1e; border-left: 15px solid #252526; }}
+        .group-children .list-item {{ border-bottom: 1px solid #2a2a2a; padding-left: 10px; }}
+        
+        .expand-btn {{
+            cursor: pointer; padding: 2px 8px; font-size: 12px; color: #aaa;
+            display: flex; align-items: center; gap: 5px;
+        }}
+        .expand-btn:hover {{ color: #fff; }}
+        .arrow {{ transition: transform 0.2s; display: inline-block; }}
+        .count-badge {{ background: #444; border-radius: 10px; padding: 0 6px; font-size: 10px; }}
+        
+        .expanded .arrow {{ transform: rotate(180deg); }}
+        .expanded + .group-children {{ display: block; }}
+
+        /* BOTONES ACCIÓN */
+        .actions {{ display: flex; gap: 5px; margin-right: 10px; min-width: 60px; }}
+        .icon-btn {{
+            background: #2d2d30; border: 1px solid #555; color: #fff;
+            width: 24px; height: 24px; border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: 0.2s; font-size: 12px; user-select: none;
+        }}
+        .icon-btn:hover {{ background: var(--accent); border-color: var(--accent); }}
+        .copied {{ background: #4ec9b0 !important; color: #000 !important; }}
+
+        .word-content {{ flex: 1; min-width: 0; }}
+        .word-text {{ font-size: 14px; font-weight: bold; color: #fff; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+        .meta-info {{ font-size: 11px; color: #888; margin-top: 2px; }}
+        .conf-badge {{ background: #333; padding: 1px 4px; border-radius: 3px; color: #4ec9b0; margin-right: 8px; }}
         .highlight {{ color: var(--highlight); text-shadow: 0 0 10px rgba(255, 77, 77, 0.2); font-weight: 900; }}
 
-        .play-btn {{
-            background: #2d2d30; border: 1px solid #555; color: #fff;
-            width: 30px; height: 30px; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            margin-right: 10px; cursor: pointer; transition: 0.2s; font-size: 12px;
-        }}
-        .play-btn:hover {{ background: var(--accent); border-color: var(--accent); transform: scale(1.1); }}
-
-        .bracket {{ position: absolute; right: 5px; width: 8px; border-color: var(--brace); display: none; opacity: 0.7; }}
+        /* LLAVES */
+        .bracket {{ position: absolute; right: 2px; width: 6px; border-color: var(--brace); display: none; opacity: 0.7; }}
         .g-start .bracket {{ display: block; height: 50%; top: 50%; border-top: 2px solid; border-right: 2px solid; border-top-right-radius: 6px; }}
         .g-mid .bracket {{ display: block; height: 100%; top: 0; border-right: 2px solid; }}
         .g-end .bracket {{ display: block; height: 50%; top: 0; border-bottom: 2px solid; border-right: 2px solid; border-bottom-right-radius: 6px; }}
 
-        /* CONTENEDOR DERECHO */
+        /* DERECHA */
         .right-panel {{ flex: 1; position: relative; background: #000; overflow: hidden; }}
-        
-        /* VIDEO FLOTANTE (Overlay) */
         .video-overlay {{
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 480px; /* Tamaño fijo razonable (1/4 de FHD) */
-            height: auto;
-            z-index: 100; /* Por encima de la foto */
-            background: #000;
-            border-bottom: 2px solid #333;
-            border-left: 2px solid #333;
-            box-shadow: -5px 5px 20px rgba(0,0,0,0.8);
+            position: absolute; top: 0; right: 0;
+            width: 480px; z-index: 100;
+            background: #000; border-bottom: 2px solid #333; border-left: 2px solid #333;
+            box-shadow: -5px 5px 20px rgba(0,0,0,0.8); opacity: 0.9;
             transition: opacity 0.3s;
-            opacity: 0.8; /* Semi-transparente para ver debajo */
         }}
-        .video-overlay:hover {{ opacity: 1; }} /* Opaco al usarlo */
+        .video-overlay:hover {{ opacity: 1; }}
         video {{ width: 100%; display: block; }}
-        
-        /* AREA DE ZOOM (Ahora ocupa todo el fondo) */
         .preview-area {{ width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }}
-        
-        /* Marco de la foto con márgenes */
-        .zoom-frame {{ 
-            width: 90%; height: 90%; 
-            position: relative; overflow: hidden; 
-            border: 1px solid #333; 
-            background: #000; 
-            display: flex; align-items: center; justify-content: center; 
-        }}
-        
+        .zoom-frame {{ width: 90%; height: 90%; position: relative; overflow: hidden; border: 1px solid #333; background: #000; display: flex; align-items: center; justify-content: center; }}
         #preview-img {{ max-width: 100%; max-height: 100%; transform-origin: center center; transition: transform 0.2s; }}
         .placeholder {{ color: #444; font-size: 1.5rem; }}
 
@@ -198,6 +205,7 @@ def generar_html(txt_input, video_path, html_output):
             <option value="alpha">Orden: Alfabético</option>
         </select>
         <label><input type="checkbox" id="spanishCheck" checked> Priorizar Español</label>
+        <label><input type="checkbox" id="groupCheck"> <strong>Agrupación Léxica</strong></label>
     </div>
     <div class="list-container" id="list"></div>
 </div>
@@ -209,7 +217,6 @@ def generar_html(txt_input, video_path, html_output):
             <source src="{video_src}" type="video/webm">
         </video>
     </div>
-
     <div class="preview-area">
         <div class="zoom-frame">
             <p class="placeholder" id="ph">Pasa el ratón por la lista</p>
@@ -229,11 +236,81 @@ def generar_html(txt_input, video_path, html_output):
     const listEl = document.getElementById('list');
     const sortEl = document.getElementById('sortSelect');
     const esCheck = document.getElementById('spanishCheck');
+    const grCheck = document.getElementById('groupCheck');
     const imgEl = document.getElementById('preview-img');
     const phEl = document.getElementById('ph');
     const modal = document.getElementById('modal');
     const modalImg = document.getElementById('modal-img');
     const video = document.getElementById('mainVideo');
+
+    // --- ALGORITMOS DE SIMILITUD ---
+    
+    // Levenshtein Distance
+    function levenshtein(a, b) {{
+        if (a.length === 0) return b.length;
+        if (b.length === 0) return a.length;
+        const matrix = [];
+        for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+        for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+        for (let i = 1; i <= b.length; i++) {{
+            for (let j = 1; j <= a.length; j++) {{
+                if (b.charAt(i - 1) === a.charAt(j - 1)) matrix[i][j] = matrix[i - 1][j - 1];
+                else matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1));
+            }}
+        }}
+        return matrix[b.length][a.length];
+    }}
+
+    function areWordsSimilar(w1, w2) {{
+        w1 = w1.toUpperCase();
+        w2 = w2.toUpperCase();
+        if (w1 === w2) return true;
+        
+        const maxLen = Math.max(w1.length, w2.length);
+        if (maxLen === 0) return true;
+        
+        const dist = levenshtein(w1, w2);
+        const similarity = 1 - (dist / maxLen);
+        
+        // Umbral dinámico:
+        // Palabras cortas (<5) necesitan ser muy parecidas (0.8 = 80%)
+        // Frases largas permiten más errores (0.7 = 70%)
+        let threshold = 0.8; 
+        if (maxLen > 10) threshold = 0.7;
+        
+        // Regla dura: VACA != BAKA (Distancia fonética no implementada, 
+        // pero Levenshtein VACA-BAKA es dist=2, len=4, sim=0.5 -> NO AGRUPA)
+        // COCHE-COSHE (dist=1, len=5, sim=0.8 -> AGRUPA)
+        
+        return similarity >= threshold;
+    }}
+
+    // --- AGRUPACIÓN LÉXICA ---
+    function groupData(items) {{
+        const groups = [];
+        const processedIndices = new Set();
+
+        for (let i = 0; i < items.length; i++) {{
+            if (processedIndices.has(i)) continue;
+            
+            const leader = items[i];
+            const group = {{ leader: leader, children: [] }};
+            processedIndices.add(i);
+
+            for (let j = i + 1; j < items.length; j++) {{
+                if (processedIndices.has(j)) continue;
+                
+                const candidate = items[j];
+                // Comparamos el candidato con el LÍDER del grupo
+                if (areWordsSimilar(leader.word, candidate.word)) {{
+                    group.children.push(candidate);
+                    processedIndices.add(j);
+                }}
+            }}
+            groups.push(group);
+        }}
+        return groups;
+    }}
 
     function playSegment(seconds) {{
         const start = Math.max(0, seconds - 0.5);
@@ -250,10 +327,76 @@ def generar_html(txt_input, video_path, html_output):
         video.addEventListener('timeupdate', stopListener);
     }}
 
+    function copyMetadata(item, btnElement) {{
+        const textToCopy = `"${{item.word}}" (Conf: ${{item.conf.toFixed(2)}}) - ${{item.time}} - [${{item.box.x1}},${{item.box.y1}},${{item.box.x2}},${{item.box.y2}}] - ${{item.src}}`;
+        const textarea = document.createElement("textarea");
+        textarea.value = textToCopy;
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {{
+            document.execCommand("copy");
+            const originalText = btnElement.innerText;
+            btnElement.innerText = "✓";
+            btnElement.classList.add("copied");
+            setTimeout(() => {{ btnElement.innerText = originalText; btnElement.classList.remove("copied"); }}, 1000);
+        }} catch (err) {{ alert("Error copiando"); }}
+        document.body.removeChild(textarea);
+    }}
+
+    function createItemDOM(item, isChild) {{
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        if (isChild) div.classList.add('child-item');
+        
+        div.innerHTML = `
+            <div class="actions">
+                <div class="icon-btn play-btn" title="Ver clip">▶</div>
+                <div class="icon-btn copy-btn" title="Copiar">📋</div>
+            </div>
+            <div class="word-content">
+                <span class="word-text">${{item.displayHtml}}</span>
+                <div class="meta-info">
+                    <span class="conf-badge">${{Math.floor(item.conf*100)}}%</span> 
+                    ${{item.time}}
+                </div>
+            </div>
+            <div class="bracket"></div>
+        `;
+
+        // Listeners
+        div.querySelector('.play-btn').addEventListener('click', (e) => {{ e.stopPropagation(); playSegment(item.seconds); }});
+        div.querySelector('.copy-btn').addEventListener('click', (e) => {{ e.stopPropagation(); copyMetadata(item, div.querySelector('.copy-btn')); }});
+        
+        div.addEventListener('mouseenter', () => {{
+            phEl.style.display = 'none';
+            imgEl.style.display = 'block';
+            imgEl.src = item.src;
+
+            const boxW = item.box.x2 - item.box.x1;
+            const boxH = item.box.y2 - item.box.y1;
+            const centerX = item.box.x1 + (boxW / 2);
+            const centerY = item.box.y1 + (boxH / 2);
+            
+            const originX = (centerX / dims.w) * 100;
+            const originY = (centerY / dims.h) * 100;
+            const scaleX = dims.w / boxW;
+            const scaleY = dims.h / boxH;
+            let scale = Math.min(scaleX, scaleY) * 0.35; 
+            if (scale < 1) scale = 1; if (scale > 5) scale = 5; 
+
+            imgEl.style.transformOrigin = `${{originX}}% ${{originY}}%`;
+            imgEl.style.transform = `scale(${{scale}})`;
+        }});
+
+        div.addEventListener('click', () => {{ modal.style.display = 'flex'; modalImg.src = item.src; }});
+        return div;
+    }}
+
     function render() {{
         listEl.innerHTML = '';
         const mode = sortEl.value;
         const prioritizeEs = esCheck.checked;
+        const grouping = grCheck.checked;
         
         let sorted = [...data];
         
@@ -264,72 +407,74 @@ def generar_html(txt_input, video_path, html_output):
             }}
             if (mode === 'conf') return b.conf - a.conf;
             if (mode === 'alpha') return a.word.localeCompare(b.word);
-            return 0; 
+            return 0; // time
         }});
 
-        sorted.forEach((item, i) => {{
-            const div = document.createElement('div');
-            div.className = 'list-item';
+        // SI LA AGRUPACIÓN ESTÁ ACTIVA
+        if (grouping) {{
+            const groups = groupData(sorted);
             
-            const p = sorted[i-1]; const n = sorted[i+1];
-            const sameP = p && p.src === item.src;
-            const sameN = n && n.src === item.src;
-            if (!sameP && sameN) div.classList.add('g-start');
-            else if (sameP && sameN) div.classList.add('g-mid');
-            else if (sameP && !sameN) div.classList.add('g-end');
-
-            div.innerHTML = `
-                <div class="play-btn" title="Ver clip">▶</div>
-                <div class="word-content">
-                    <span class="word-text">${{item.displayHtml}}</span>
-                    <div class="meta-info">
-                        <span class="conf-badge">${{Math.floor(item.conf*100)}}%</span> 
-                        ${{item.time}}
-                    </div>
-                </div>
-                <div class="bracket"></div>
-            `;
-
-            const btn = div.querySelector('.play-btn');
-            btn.addEventListener('click', (e) => {{
-                e.stopPropagation();
-                playSegment(item.seconds);
-            }});
-
-            div.addEventListener('mouseenter', () => {{
-                phEl.style.display = 'none';
-                imgEl.style.display = 'block';
-                imgEl.src = item.src;
-
-                const boxW = item.box.x2 - item.box.x1;
-                const boxH = item.box.y2 - item.box.y1;
-                const centerX = item.box.x1 + (boxW / 2);
-                const centerY = item.box.y1 + (boxH / 2);
-
-                const originX = (centerX / dims.w) * 100;
-                const originY = (centerY / dims.h) * 100;
+            groups.forEach(group => {{
+                // Renderizar LIDER
+                const leaderDiv = createItemDOM(group.leader, false);
                 
-                const scaleX = dims.w / boxW;
-                const scaleY = dims.h / boxH;
-                let scale = Math.min(scaleX, scaleY) * 0.35; 
-                if (scale < 1) scale = 1; 
-                if (scale > 5) scale = 5; 
+                // Si tiene hijos, añadimos controles de grupo
+                if (group.children.length > 0) {{
+                    leaderDiv.classList.add('group-header');
+                    
+                    // Crear botón de expansión
+                    const expandDiv = document.createElement('div');
+                    expandDiv.className = 'expand-btn';
+                    expandDiv.innerHTML = `<span class="count-badge">+${{group.children.length}}</span> <span class="arrow">▼</span>`;
+                    
+                    // Contenedor de hijos
+                    const childrenContainer = document.createElement('div');
+                    childrenContainer.className = 'group-children';
+                    
+                    group.children.forEach(child => {{
+                        const childDiv = createItemDOM(child, true);
+                        childrenContainer.appendChild(childDiv);
+                    }});
 
-                imgEl.style.transformOrigin = `${{originX}}% ${{originY}}%`;
-                imgEl.style.transform = `scale(${{scale}})`;
+                    // Evento Toggle
+                    expandDiv.addEventListener('click', (e) => {{
+                        e.stopPropagation();
+                        leaderDiv.classList.toggle('expanded');
+                    }});
+                    
+                    // Añadimos el botón a la derecha del contenido
+                    leaderDiv.querySelector('.word-content').appendChild(expandDiv);
+                    
+                    // Añadimos todo al DOM
+                    listEl.appendChild(leaderDiv);
+                    listEl.appendChild(childrenContainer);
+                }} else {{
+                    listEl.appendChild(leaderDiv);
+                }}
             }});
 
-            div.addEventListener('click', () => {{
-                modal.style.display = 'flex';
-                modalImg.src = item.src;
+        }} else {{
+            // RENDERIZADO PLANO (Sin agrupar)
+            sorted.forEach((item, i) => {{
+                const div = createItemDOM(item, false);
+                
+                // Llaves de frame (solo en plano)
+                if (mode === 'time' && !prioritizeEs) {{
+                    const p = sorted[i-1]; const n = sorted[i+1];
+                    const sameP = p && p.src === item.src;
+                    const sameN = n && n.src === item.src;
+                    if (!sameP && sameN) div.classList.add('g-start');
+                    else if (sameP && sameN) div.classList.add('g-mid');
+                    else if (sameP && !sameN) div.classList.add('g-end');
+                }}
+                listEl.appendChild(div);
             }});
-
-            listEl.appendChild(div);
-        }});
+        }}
     }}
 
     sortEl.addEventListener('change', render);
     esCheck.addEventListener('change', render);
+    grCheck.addEventListener('change', render);
     modal.addEventListener('click', () => modal.style.display = 'none');
     
     render();
@@ -341,7 +486,7 @@ def generar_html(txt_input, video_path, html_output):
     with open(html_output, "w", encoding="utf-8") as f:
         f.write(html_content)
     
-    print(f"🚀 Visor Overlay generado en: {html_output}")
+    print(f"🚀 Visor PRO (Agrupación) generado en: {html_output}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
