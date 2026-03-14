@@ -29,8 +29,11 @@ Python scripts to detect words in a video and easily navigate through them on a 
 6. Install Python libraries:
 
    `python -m pip install paddlepaddle-gpu==2.6.1.post117 -f https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html`
+   
    `pip install "paddleocr>=2.7.0.0,<2.8.0.0" protobuf==3.20.2`
+   
    `pip install "opencv-python-headless<4.11" "opencv-python<4.11" "opencv-contrib-python<4.11"`
+   
    `pip install "numpy<2.0"`
 
 ## How to use
@@ -50,3 +53,7 @@ When the script is finished, it will generate all the frames where text is detec
 `python .\visor_gen.py <path/to/frames/>detection_log.txt --video <path/to/video>`
 
 This will generate a webpage in the <path/to/frames> folder.
+
+## Mentions
+
+Spanish dictionary from: https://github.com/JorgeDuenasLerin/diccionario-espanol-txt
